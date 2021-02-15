@@ -163,24 +163,24 @@ if __name__ == "__main__":
             # ensure accomodating directory exists for the new symlink
             name_dir = path.dirname(name)
             if not path.isdir(name_dir):
+                log(f"MKDIRS: {name_dir}", verbose)
                 if not dry_run:
                     os.makedirs(name_dir, exist_ok=True)
-                log(f"MKDIRS: {name_dir}", verbose)
             # create the symlink
+            log(f"LINK: {name} -> {dest}", verbose)
             if not dry_run:
                 os.symlink(dest, name)
-            log(f"LINK: {name} -> {dest}", verbose)
     else:
         for name in symlink_names:
             # remove the symlink
+            log(f"UNLINK: {name}", verbose)
             if not dry_run:
                 os.unlink(name)
-            log(f"UNLINK: {name}", verbose)
             # cleanup as many empty parent dirs as possible
             name_dir = path.dirname(name)
             while not os.listdir(name_dir):
+                log(f"RMDIR: {name_dir}", verbose)
                 if not dry_run:
                     os.rmdir(name_dir)
-                log(f"RMDIR: {name_dir}", verbose)
                 # this is safe because this is a calculation; not dependent on filesystem state
                 name_dir = path.dirname(name_dir)
