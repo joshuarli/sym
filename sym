@@ -58,10 +58,9 @@ if __name__ == "__main__":
         "-d", "--delete", action="store_true", help="remove symlinks instead of create"
     )
     parser.add_argument(
-        "-p",
-        "--pretend",
+        "--dry-run",
         action="store_true",
-        help="pretend; implies -v but does not perform any actual operations.",
+        help="implies -v, but does not perform any actual operations.",
     )
     parser.add_argument(
         "-v",
@@ -85,8 +84,8 @@ if __name__ == "__main__":
         sys.exit(f"target directory {args.target} is not a directory or does not exist")
     target_dir = args.target
 
-    verbose = args.verbose or args.pretend
-    pretend = args.pretend
+    verbose = args.verbose or args.dry_run
+    dry_run = args.dry_run
     delete_mode = args.delete
 
     # pass #1: collect symlink jobs from all sources and detect conflicts
@@ -154,15 +153,13 @@ if __name__ == "__main__":
     # if any conflicts, report them and exit
     for c in conflicts:
         print("CONFLICT:", c, file=sys.stderr)
-    if conflicts and not pretend:
+    if conflicts and not dry_run:
         sys.exit("sym will not start until all conflicts are resolved.")
 
-    if pretend:
+    if dry_run:
         # XXX: this doesn't include RMDIR because that depends on actual filesystem operations at the moment
-        #      and pretend-specific code to autodetect those operations isn't worth the added complexity right now
-        print(
-            "Pretend mode is on; the following operations are what would have been executed."
-        )
+        #      and dry-run code to autodetect those operations isn't worth the added complexity right now
+        print("dry-run; the following operations are what would have been executed.")
 
     # pass #2: perform operations
     if not delete_mode:
@@ -170,23 +167,23 @@ if __name__ == "__main__":
             # ensure accomodating directory exists for the new symlink
             name_dir = path.dirname(name)
             if not path.isdir(name_dir):
-                if not pretend:
+                if not dry_run:
                     os.makedirs(name_dir, exist_ok=True)
                 log(f"MKDIRS: {name_dir}", verbose)
             # create the symlink
-            if not pretend:
+            if not dry_run:
                 os.symlink(dest, name)
             log(f"LINK: {name} -> {dest}", verbose)
     else:
         for name in symlink_names:
             # remove the symlink
-            if not pretend:
+            if not dry_run:
                 os.unlink(name)
             log(f"UNLINK: {name}", verbose)
             # cleanup as many empty parent dirs as possible
             name_dir = path.dirname(name)
             while not os.listdir(name_dir):
-                if not pretend:
+                if not dry_run:
                     os.rmdir(name_dir)
                 log(f"RMDIR: {name_dir}", verbose)
                 # this is safe because this is a calculation; not dependent on filesystem state
