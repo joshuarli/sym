@@ -4,17 +4,7 @@ import os
 import os.path as path
 import sys
 import argparse
-from fnmatch import fnmatch
-
-# these globs are case-insensitively matched against the filename
-# TODO: tests for verbose output (ignored reports)
-# TODO: support repeatable --exclude and --include filename (or filepath?) regexes
-DEFAULT_GLOB_BLACKLIST = (
-    ".git",
-    ".gitignore",
-    "README*",
-    "LICENSE*",
-)
+from fnmatch import fnmatchcase
 
 
 def log(msg, v):
@@ -23,19 +13,17 @@ def log(msg, v):
     print(msg)
 
 
-def walk(start, verbose=False):
+def walk(start, ignore_patterns, verbose=False):
     with os.scandir(start) as it:
         for entry in it:
-            if any(
-                fnmatch(path.basename(entry.path), glob)
-                for glob in DEFAULT_GLOB_BLACKLIST
-            ):
-                log(f"IGNORE: {entry.path}", verbose)
+            fp = entry.path
+            if any(fnmatchcase(fp, glob) for glob in ignore_patterns):
+                log(f"IGNORE: {fp}", verbose)
                 continue
             if entry.is_dir():
-                yield from walk(entry.path, verbose)
+                yield from walk(fp, ignore_patterns, verbose)
             elif entry.is_file(follow_symlinks=False):
-                yield entry.path
+                yield fp
 
 
 if __name__ == "__main__":
@@ -45,6 +33,13 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         help="source directory containing files to be symlinked",
+    )
+    parser.add_argument(
+        "--exclude",
+        dest="ignore_patterns",
+        type=str,
+        action="append",
+        help="exclude pattern (case-sensitive shell-style wildcard), refer to python's fnmatch module",
     )
     parser.add_argument(
         "-t",
@@ -87,11 +82,12 @@ if __name__ == "__main__":
     verbose = args.verbose or args.dry_run
     dry_run = args.dry_run
     delete_mode = args.delete
+    ignore_patterns = tuple(args.ignore_patterns)
 
     # pass #1: collect symlink jobs from all sources and detect conflicts
     symlink_names, symlink_dests, conflicts = [], [], []
     for source_dir in source_dirs:
-        for filepath in walk(source_dir, verbose):
+        for filepath in walk(source_dir, ignore_patterns, verbose):
             # say we're given dotfiles/mpv as a source directory, and it contains .config/mpv/mpv.conf
             # say we have a target dir of ~, and dotfiles/mpv full path is ~/somewhere/dotfiles/mpv
             # (the $PWD is ~/somewhere)
