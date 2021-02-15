@@ -1,8 +1,9 @@
-# sym-prototype
+# sym
 
 sym is a straightforward batch symlinker.
 
-It implements the feature subset most GNU Stow users use to (un,)install their dotfiles. Improvements include a cleaned-up command line, sane defaults, and multiple args. So instead of something like...
+It implements the feature subset most GNU Stow users use to (un,)install their dotfiles.
+Improvements include a cleaned-up command line, sane defaults, and multiple args. So instead of something like...
 
 	$ stow --no-folding -t $HOME -d shells bash
 	$ stow --no-folding -t $HOME -d dev-langs python
@@ -12,12 +13,10 @@ It implements the feature subset most GNU Stow users use to (un,)install their d
 
 	$ sym shells/bash dev-langs/python dev-tools/tmux
 
-This is the python prototype and reference implementation for a possible golang (or similar) implementation in the future.
-
 
 ## Installation
 
-It's a standalone, stdlib-only python script that works on 3.6+ but can probably be trivially ported to 3.x if you so desire.
+It's a standalone, stdlib-only python script that should work on 3.6+.
 
 
 ## Usage
@@ -41,7 +40,8 @@ And you're in `${HOME}/somewhere/else/dotfiles`:
           └── mpv
              └── mpv.conf
 
-To symlink your `bash` and `mpv` configuration files ("source" directories) to `$HOME` (the "target" directory's default value - it can be specified with `-t`), simply invoke:
+To symlink your `bash` and `mpv` configuration files ("source" directories) to `$HOME`
+(the "target" directory's default value - it can be specified with `-t`), simply invoke:
 
 	$ sym bash mpv
 
@@ -57,7 +57,9 @@ The resulting `$HOME`:
        └── mpv
           └── mpv.conf -> somewhere/else/dotfiles/mpv/.config/mpv/mpv.conf
 
-To remove symlinks, pass the `-d` (delete) flag: `sym -d bash mpv`.
+To remove symlinks, pass `-d`, `--delete`: `sym -d bash mpv`.
+
+There is also a useful and recommended `--dry-run` option.
 
 
 ## Operational Notes
@@ -70,8 +72,6 @@ To remove symlinks, pass the `-d` (delete) flag: `sym -d bash mpv`.
 - remove empty directories resulting from symlink removal (GNU Stow does not do this)
 
 Like GNU Stow, `sym` performs two passes. The first pass collects symlink jobs, and if any conflicts are detected during this process, they will all be printed and `sym` will exit. The second pass executes all the symlink jobs, symlinking or removing depending on whether or not `-d` was passed.
-
-By default, `sym` ignores some filepaths with a built-in filename glob blacklist. In the future, repeatable `--exclude` (glob or regex, not decided yet) and `--include` will be implemented.
 
 
 ## Appendix
