@@ -82,7 +82,7 @@ if __name__ == "__main__":
     verbose = args.verbose or args.dry_run
     dry_run = args.dry_run
     delete_mode = args.delete
-    ignore_patterns = tuple(args.ignore_patterns)
+    ignore_patterns = tuple(args.ignore_patterns or ())
 
     # pass #1: collect symlink jobs from all sources and detect conflicts
     symlink_names, symlink_dests, conflicts = [], [], []
