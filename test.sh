@@ -17,22 +17,22 @@ touch dotfiles/mpv/.config/mpv/mpv.conf
 nfailed=0
 echo "running tests."
 
-echo -e "\n1: pretend, no conflicts, link all"
+echo -e "\n1: dry-run, no conflicts, link all"
 # end setup
-$sym -t home -p dotfiles/* &> log
-expected="Pretend mode is on; the following operations are what would have been executed.
+$sym -t home --dry-run dotfiles/* &> log
+expected="dry-run; the following operations are what would have been executed.
 LINK: home/.bashrc -> ../dotfiles/bash/.bashrc
 MKDIRS: home/.config/mpv
 LINK: home/.config/mpv/mpv.conf -> ../../../dotfiles/mpv/.config/mpv/mpv.conf"
 echo "  assertion 1: expected output"; diff log <(echo "$expected") || nfailed=$((nfailed + 1))
 
 
-echo -e "\n2: pretend, conflict with bash, link all"
+echo -e "\n2: dry-run, conflict with bash, link all"
 touch home/.bashrc
 # end setup
-$sym -t home -p dotfiles/* &> log
+$sym -t home --dry-run dotfiles/* &> log
 expected="CONFLICT: home/.bashrc already exists. sym cannot create symlinks if there is an existing file.
-Pretend mode is on; the following operations are what would have been executed.
+dry-run; the following operations are what would have been executed.
 MKDIRS: home/.config/mpv
 LINK: home/.config/mpv/mpv.conf -> ../../../dotfiles/mpv/.config/mpv/mpv.conf"
 echo "  assertion 1: expected output"; diff log <(echo "$expected") || nfailed=$((nfailed + 1))
@@ -41,7 +41,7 @@ rm -r home; mkdir home
 
 echo -e "\n3: nonexistent target directory"
 # end setup
-$sym -t home/foo -p dotfiles/* &> log || true
+$sym -t home/foo dotfiles/* &> log || true
 echo "  assertion 1: expected output"; expected="target directory home/foo is not a directory or does not exist"
 diff log <(echo "$expected") || nfailed=$((nfailed + 1))
 
@@ -77,24 +77,24 @@ rm -r home; mkdir home
 rm -r expected-home; mkdir expected-home
 
 
-echo -e "\n6: pretend, unlink all"
+echo -e "\n6: dry-run, unlink all"
 $sym -t home dotfiles/* > /dev/null
 # end setup
-$sym -t home -p -d dotfiles/* &> log
-expected="Pretend mode is on; the following operations are what would have been executed.
+$sym -t home --delete --dry-run dotfiles/* &> log
+expected="dry-run; the following operations are what would have been executed.
 UNLINK: home/.bashrc
 UNLINK: home/.config/mpv/mpv.conf"
 echo "  assertion 1: expected output"; diff log <(echo "$expected") || nfailed=$((nfailed + 1))
 rm -r home; mkdir home
 
 
-echo -e "\n7: pretend, unlink only mpv, but is 'not owned' by sym (absolute symlink to same path)"
+echo -e "\n7: dry-run, unlink only mpv, but is 'not owned' by sym (absolute symlink to same path)"
 $sym -t home dotfiles/* > /dev/null
 ln -sf "$(readlink -f home/.config/mpv/mpv.conf)" home/.config/mpv/mpv.conf
 # end setup
-$sym -t home -p -d dotfiles/* &> log
+$sym -t home --delete --dry-run dotfiles/* &> log
 expected="CONFLICT: home/.config/mpv/mpv.conf is an absolute symlink. sym only creates relative symlinks, so refusing to remove.
-Pretend mode is on; the following operations are what would have been executed.
+dry-run; the following operations are what would have been executed.
 UNLINK: home/.bashrc"
 echo "  assertion 1: expected output"; diff log <(echo "$expected") || nfailed=$((nfailed + 1))
 rm -r home; mkdir home
