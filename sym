@@ -1,182 +1,143 @@
-#!/usr/bin/env python3
+#!/bin/sh
+# sym - batch symlinker for dotfiles
 
-import os
-import os.path as path
-import sys
-import argparse
-from fnmatch import fnmatchcase
+die()   { printf '%s\n' "$*" >&2; exit 1; }
+usage() { printf 'usage: sym [-t TARGET] [-d] [--dry-run] [-v] [--exclude PATTERN]... SOURCE\n' >&2; exit 1; }
+log()   { if "$verbose"; then printf '%s\n' "$1"; fi; }
 
+# relpath DEST BASE
+# Relative path from directory BASE to file DEST (both absolute, no trailing /).
+relpath() {
+    _d="$1" _b="$2" _up=''
+    while [ "$_b" != / ]; do
+        case $_d in "$_b"/* | "$_b") break ;; esac
+        _up="../$_up"
+        _b="${_b%/*}"; [ -z "$_b" ] && _b=/
+    done
+    if [ "$_b" = / ]; then _r="${_d#/}"; else _r="${_d#"$_b"/}"; fi
+    [ -n "$_r" ] && printf '%s%s' "$_up" "$_r" || printf '%s' "${_up%/}"
+}
 
-def log(msg, v):
-    if not v:
-        return
-    print(msg)
+# Defaults
+target="$HOME"; delete=false; dry_run=false; verbose=false; excludes=''
 
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -t|--target)  [ $# -ge 2 ] || usage; shift; target="$1" ;;
+        -d|--delete)  delete=true ;;
+        --dry-run)    dry_run=true; verbose=true ;;
+        -v|--verbose) verbose=true ;;
+        --exclude)    [ $# -ge 2 ] || usage; shift
+                      excludes="${excludes:+${excludes}
+}$1" ;;
+        --) shift; break ;;
+        -*) usage ;;
+        *)  break ;;
+    esac
+    shift
+done
 
-def walk(start, ignore_patterns, verbose=False):
-    with os.scandir(start) as it:
-        for entry in it:
-            fp = entry.path
-            if any(fnmatchcase(fp, glob) for glob in ignore_patterns):
-                log(f"IGNORE: {fp}", verbose)
-                continue
-            if entry.is_dir():
-                yield from walk(fp, ignore_patterns, verbose)
-            elif entry.is_file(follow_symlinks=False):
-                yield fp
+[ $# -eq 1 ] || usage
 
+[ -d "$1" ]      || die "source directory $1 is not a directory or does not exist"
+[ -d "$target" ] || die "target directory $target is not a directory or does not exist"
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "source",
-    type=str,
-    nargs="+",
-    help="source directory containing files to be symlinked",
-)
-parser.add_argument(
-    "--exclude",
-    dest="ignore_patterns",
-    type=str,
-    action="append",
-    help="exclude pattern (case-sensitive shell-style wildcard), refer to python's fnmatch module",
-)
-parser.add_argument(
-    "-t",
-    "--target",
-    metavar="TARGET",
-    type=str,
-    help="target directory to create symlinks in (default: $HOME)",
-    default=path.expanduser("~"),
-)
-parser.add_argument(
-    "-d", "--delete", action="store_true", help="remove symlinks instead of create"
-)
-parser.add_argument(
-    "--dry-run",
-    action="store_true",
-    help="implies -v, but does not perform any actual operations.",
-)
-parser.add_argument(
-    "-v",
-    "--verbose",
-    action="store_true",
-    help="print symlinks as they are created or removed",
-)
-args = parser.parse_args()
+# src/tgt: user-supplied strings, used for output paths
+# src_abs/tgt_abs: canonical absolute paths, used only for relpath computation
+src="${1%/}"
+tgt="${target%/}"
+src_abs="$(cd "$src" && pwd)"
+tgt_abs="$(cd "$tgt" && pwd)"
 
-source_dirs = []
-for source_dir in args.source:
-    if not path.isdir(source_dir):
-        sys.exit(f"source directory {source_dir} is not a directory or does not exist")
-    if not source_dir.endswith("/"):
-        source_dir += "/"
-    source_dirs.append(source_dir)
+tmp="${TMPDIR:-/tmp}/sym.$$"
+mkdir "$tmp" || die 'failed to create temp directory'
+trap 'rm -rf "$tmp"' EXIT INT TERM
 
-if not path.isdir(args.target):
-    sys.exit(f"target directory {args.target} is not a directory or does not exist")
-target_dir = args.target
+# Enumerate all regular files under src (paths will share the $src prefix)
+find "$src" -type f > "$tmp/files"
 
-verbose = args.verbose or args.dry_run
-dry_run = args.dry_run
-delete_mode = args.delete
-ignore_patterns = tuple(args.ignore_patterns or ())
+# Pass 1: compute jobs and detect conflicts
+while IFS= read -r fp; do
+    # Filter excluded paths
+    if [ -n "$excludes" ]; then
+        _skip=false
+        while IFS= read -r pat; do
+            [ -z "$pat" ] && continue
+            # shellcheck disable=SC2254
+            case $fp in $pat) _skip=true; break ;; esac
+        done << PATS
+$excludes
+PATS
+        if $_skip; then log "IGNORE: $fp"; continue; fi
+    fi
 
-# pass #1: collect symlink jobs from all sources and detect conflicts
-symlink_names, symlink_dests, conflicts = [], [], []
-for source_dir in source_dirs:
-    for filepath in walk(source_dir, ignore_patterns, verbose):
-        # say we're given dotfiles/mpv as a source directory, and it contains .config/mpv/mpv.conf
-        # say we have a target dir of ~, and dotfiles/mpv full path is ~/somewhere/dotfiles/mpv
-        # (the $PWD is ~/somewhere)
-        # we want to create the relative symlink at (the name/path) ~/.config/mpv/mpv.conf,
-        # pointing to ../../../somewhere/dotfiles/.config/mpv/mpv.conf
+    rel="${fp#"$src/"}"
+    name="$tgt/$rel"
+    # Absolute versions for relpath computation only
+    fp_abs="$src_abs/$rel"
+    name_abs="$tgt_abs/$rel"
+    dir_abs="${name_abs%/*}"
+    dest="$(relpath "$fp_abs" "$dir_abs")"
 
-        # the symlink name is target dir + filepath without the parent source_dir
-        # it is guaranteed that the filepath has source_dir at the beginning,
-        # so removing that # chars from the beginning should be correct.
-        name = path.join(target_dir, filepath[len(source_dir) :])
-        if name in symlink_names:
-            conflicts.append(
-                f"sym is trying to create more than one {name}, refusing to create duplicate symlinks."
-            )
+    if $delete; then
+        { [ -e "$name" ] || [ -L "$name" ]; } || continue
+        if [ ! -L "$name" ]; then
+            printf 'CONFLICT: %s is not a symlink, so refusing to remove.\n' "$name" >> "$tmp/conflicts"
             continue
+        fi
+        if ! [ "$name" -ef "$fp_abs" ]; then
+            printf 'CONFLICT: %s does not point to the expected destination, so refusing to remove.\n' "$name" >> "$tmp/conflicts"
+            continue
+        fi
+    else
+        if [ -L "$name" ]; then
+            [ "$name" -ef "$fp_abs" ] && continue  # already correct, idempotent
+            printf 'CONFLICT: %s already exists. sym cannot create symlinks if there is an existing file.\n' "$name" >> "$tmp/conflicts"
+            continue
+        elif [ -e "$name" ]; then
+            printf 'CONFLICT: %s already exists. sym cannot create symlinks if there is an existing file.\n' "$name" >> "$tmp/conflicts"
+            continue
+        fi
+    fi
 
-        # the symlink dest is filepath, relative to the name's directory.
-        # conversion to absolute paths is necessary for relpath to work here.
-        dest_abspath = path.abspath(filepath)
-        dest = path.relpath(dest_abspath, path.dirname(path.abspath(name)))
+    printf '%s\n' "$name" >> "$tmp/names"
+    printf '%s\n' "$dest" >> "$tmp/dests"
 
-        exists = path.exists(name)
-        islink = path.islink(name)
-        realpath = path.realpath(name)
+done < "$tmp/files"
 
-        if not delete_mode:
-            # if the symlink we are trying to create exists...
-            if exists:
-                # ...but is a symlink to the valid file we are trying to symlink, ignore it.
-                if islink and (realpath == dest_abspath):
-                    continue
-                # otherwise, conflict.
-                conflicts.append(
-                    f"{name} already exists. sym cannot create symlinks if there is an existing file."
-                )
-                continue
-        else:
-            # if the symlink doesn't exist, we obviously don't need to try and delete it.
-            if not exists:
-                continue
-            # but if it does, there is potential for conflicts (deleting something we shouldn't be deleting)
-            if not islink:
-                conflicts.append(f"{name} is not a symlink, so refusing to remove.")
-                continue
-            if os.readlink(name)[0] == "/":
-                conflicts.append(
-                    f"{name} is an absolute symlink. sym only creates relative symlinks, so refusing to remove."
-                )
-                continue
-            if realpath != dest_abspath:
-                conflicts.append(
-                    f"{name} is a relative symlink, but resolves to {realpath} instead of the expected {dest_abspath}, so refusing to remove."
-                )
-                continue
+# Report conflicts
+if [ -s "$tmp/conflicts" ]; then
+    cat "$tmp/conflicts" >&2
+    $dry_run || die "sym will not start until all conflicts are resolved."
+fi
 
-        symlink_names.append(name)
-        symlink_dests.append(dest)
+$dry_run && printf 'dry-run; the following operations are what would have been executed.\n'
 
-for c in conflicts:
-    print("CONFLICT:", c, file=sys.stderr)
-if conflicts and not dry_run:
-    sys.exit("sym will not start until all conflicts are resolved.")
+[ -s "$tmp/names" ] || exit 0
 
-if dry_run:
-    # XXX: this doesn't include RMDIR because that depends on actual filesystem operations at the moment
-    #      and dry-run code to autodetect those operations isn't worth the added complexity right now
-    print("dry-run; the following operations are what would have been executed.")
-
-# pass #2: perform operations
-if not delete_mode:
-    for name, dest in zip(symlink_names, symlink_dests):
-        # ensure accomodating directory exists for the new symlink
-        name_dir = path.dirname(name)
-        if not path.isdir(name_dir):
-            log(f"MKDIRS: {name_dir}", verbose)
-            if not dry_run:
-                os.makedirs(name_dir, exist_ok=True)
-        # create the symlink
-        log(f"LINK: {name} -> {dest}", verbose)
-        if not dry_run:
-            os.symlink(dest, name)
-else:
-    for name in symlink_names:
-        # remove the symlink
-        log(f"UNLINK: {name}", verbose)
-        if not dry_run:
-            os.unlink(name)
-        # cleanup as many empty parent dirs as possible
-        name_dir = path.dirname(name)
-        while not os.listdir(name_dir):
-            log(f"RMDIR: {name_dir}", verbose)
-            if not dry_run:
-                os.rmdir(name_dir)
-            # this is safe because this is a calculation; not dependent on filesystem state
-            name_dir = path.dirname(name_dir)
+# Pass 2: execute
+if $delete; then
+    while IFS= read -r name; do
+        log "UNLINK: $name"
+        $dry_run || rm "$name"
+        if ! $dry_run; then
+            dir="${name%/*}"
+            while [ -d "$dir" ] && [ -z "$(ls -A "$dir")" ]; do
+                log "RMDIR: $dir"
+                rmdir "$dir"
+                dir="${dir%/*}"
+            done
+        fi
+    done < "$tmp/names"
+else
+    paste "$tmp/names" "$tmp/dests" > "$tmp/jobs"
+    while IFS="$(printf '\t')" read -r name dest; do
+        dir="${name%/*}"
+        if [ ! -d "$dir" ]; then
+            log "MKDIRS: $dir"
+            $dry_run || mkdir -p "$dir"
+        fi
+        log "LINK: $name -> $dest"
+        $dry_run || ln -s "$dest" "$name"
+    done < "$tmp/jobs"
+fi
