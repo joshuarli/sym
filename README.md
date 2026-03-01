@@ -4,7 +4,7 @@ A simple dotfile symlinker. A focused alternative to GNU Stow with saner default
 
 ## Installation
 
-A single POSIX sh script with no dependencies. Copy `sym` anywhere on your `$PATH`.
+`sym` is a single POSIX sh script with no dependencies.
 
 ```
 usage: sym [-t TARGET] [-d] [--dry-run] [-v] [--exclude PATTERN]... SOURCE
